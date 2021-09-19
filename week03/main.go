@@ -53,7 +53,8 @@ func main() {
 		return errors.New("inject error")
 	})
 
-	err := g.Wait() // first error return
+	// first error return
+	err := g.Wait()
 	fmt.Println(err)
 
 }
