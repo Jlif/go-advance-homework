@@ -3,58 +3,60 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/go-kratos/kratos/v2/transport/http"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
+	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 )
 
 func main() {
-	g, ctx := errgroup.WithContext(context.Background())
-	httpSrv := http.NewServer(http.Address(":8080"))
+	eg, ctx := errgroup.WithContext(context.Background())
+
 	// http server
-	g.Go(func() error {
-		fmt.Println("http")
+	eg.Go(func() error {
+		server := http.Server{Addr: ":8080"}
+
 		go func() {
-			<-ctx.Done()
-			fmt.Println("http ctx done")
-			httpSrv.Shutdown(context.TODO())
+			// 启动后监听信号
+			select {
+			case <-ctx.Done():
+				fmt.Println("http context done")
+				err := server.Shutdown(ctx)
+				if err != nil {
+					log.Fatal("stop http server fail")
+				}
+			}
 		}()
-		return httpSrv.Start(context.Background())
+
+		fmt.Println("http server start")
+		return server.ListenAndServe()
 	})
 
 	// signal
-	g.Go(func() error {
-		// SIGTERM is POSIX specific
-		exitSignals := []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT}
-		sig := make(chan os.Signal, len(exitSignals))
-		signal.Notify(sig, exitSignals...)
+	eg.Go(func() error {
+		exitSignals := []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGKILL}
+		sigChan := make(chan os.Signal, len(exitSignals))
+		signal.Notify(sigChan, exitSignals...)
+		fmt.Println("waiting signal...")
+
 		for {
-			fmt.Println("signal")
 			select {
 			case <-ctx.Done():
-				fmt.Println("signal ctx done")
+				fmt.Println("signal context done")
 				return ctx.Err()
-			case <-sig:
-				// do something
-				return nil
+			case sig := <-sigChan:
+				fmt.Printf("receive quit command -> %s\n", sig)
+				//收到信号后，将context标记为done
+				ctx.Done()
+				return errors.Errorf("receive quit command -> %s", sig)
 			}
 		}
 	})
 
-	// inject error
-	g.Go(func() error {
-		fmt.Println("inject")
-		time.Sleep(10 * time.Second)
-		fmt.Println("inject finish")
-		return errors.New("inject error")
-	})
-
-	// first error return
-	err := g.Wait()
-	fmt.Println(err)
+	err := eg.Wait()
+	fmt.Printf("main stop -> %s", err)
 
 }
